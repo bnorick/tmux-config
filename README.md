@@ -366,6 +366,8 @@ There is a root keybinding to enter Copy mode: `M-Up`. Once in copy mode, you ha
 
 `Space` starts selection, `Enter` copies selection and exits copy mode. List all items in copy buffer using `prefix C-p`, and paste most recent item from buffer using `prexix p`.
 
+Press `prefix y` outside copy mode to copy the current pane's entire retained history, including its visible contents, directly to the local clipboard.
+
 `y` just copies selected text and is equivalent to `Enter`,  `Y` copies whole line, and `D` copies by the end of line.
 
 Also, note, that when text is copied any trailing new lines are stripped. So, when you paste buffer in a command prompt, it will not be immediately executed.
