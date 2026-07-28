@@ -33,29 +33,24 @@ Features
 - highlight focused pane
 - merge current session with existing one (move all windows)
 - configurable visual theme/colors, with some elements borrowed from [Powerline](https://github.com/powerline/powerline)
-- integration with 3rd party plugins: [tmux-sidebar](https://github.com/tmux-plugins/tmux-sidebar), [tmux-copycat](https://github.com/tmux-plugins/tmux-copycat), [tmux-open](https://github.com/tmux-plugins/tmux-open), [tmux-plugin-sysstat](https://github.com/samoshkin/tmux-plugin-sysstat)
+- integration with 3rd party plugins: [tmux-sidebar](https://github.com/tmux-plugins/tmux-sidebar), [tmux-copycat](https://github.com/tmux-plugins/tmux-copycat), [tmux-online-status](https://github.com/tmux-plugins/tmux-online-status), and a locally patched, vendored copy of [tmux-plugin-sysstat](https://github.com/samoshkin/tmux-plugin-sysstat)
 
 **Status line widgets**:
 
 - CPU, memory usage, system load average metrics
 - username and hostname, current date time
-- battery information in status line
 - visual indicator when you press `prefix`
 - visual indicator when you're in `Copy` mode
 - visual indicator when pane is zoomed
-- online/offline visual indicator
-- toggle visibility of status line
+- online/offline visual indicator in local sessions
 
 
 Installation
 -------------
 Prerequisites:
-- tmux >= "v2.4"
-- OSX, Linux (tested on Ubuntu 14 and CentOS7), FreeBSD (tested on 11.1)
-
-Personally, I use it on OSX 10.11.5 El Capitan through iTerm2.
-
-On OSX you can install latest 2.6 version with `brew install tmux`. On Linux it's better to install from source, because official repositories usually contain outdated version. For example, CentOS7 - v1.8 from base repo, Ubuntu 14 - v1.8 from trusty/main. For how to install from source, see this [gist](https://gist.github.com/P7h/91e14096374075f5316e) or just google it.
+- tmux 3.2 or newer is recommended
+- Bash
+- macOS, Linux, or FreeBSD
 
 
 To install tmux-config:
@@ -67,8 +62,9 @@ $ ./tmux-config/install.sh
 `install.sh` script does following:
 - copies files to `~/.tmux` directory
 - symlink tmux config file at `~/.tmux.conf`, existing `~/.tmux.conf` will be backed up
-- [Tmux Plugin Manager](https://github.com/tmux-plugins/tpm) will be installed at default location `~/.tmux/plugins/tpm`, unless already presemt
-- required tmux plugins will be installed
+- [Tmux Plugin Manager](https://github.com/tmux-plugins/tpm) will be installed at its default location, `~/.tmux/plugins/tpm`, unless already present
+- plugins declared with `@plugin` will be installed through TPM
+- the patched sysstat plugin will be copied to `~/.tmux/vendor/tmux-plugin-sysstat` and loaded directly, so TPM updates cannot overwrite the local fix
 
 Finally, you can jump into a new tmux session:
 
@@ -294,8 +290,8 @@ If you are an iTerm2 user, third column describes the keybinding of similar  "ac
         <td>-</td>
     </tr>
     <tr>
-        <td><code>&lt;prefix&gt; F12</code></td>
-        <td>Switch off all key binding and prefix hanling in current window. See "Nested sessions" paragraph for more info</td>
+        <td><code>S-Down</code> / <code>S-Up</code></td>
+        <td>Switch off/on key bindings and prefix handling for nested sessions. See "Nested sessions" for more information</td>
         <td>-</td>
     </tr>
 </table>
@@ -306,7 +302,7 @@ Status line
 
 I've started with Powerline as a status line, but then realized it's too fat for my Macbook 15'' display, it hardly can fit all those fancy arrows, widgets and separators, so that I can only see one window "tab".
 
-So I decide to make my feet wet, with the idea to keep it dense, and include essential widgets. Sometimes it tries to replicate OSX topbar (battery, date time).
+So I decided to keep it dense and include only essential widgets.
 
 Left part:
 ![status line left](https://user-images.githubusercontent.com/768858/33151594-59db6a8e-cfe1-11e7-8a36-476fe0b416b3.png)
@@ -320,22 +316,21 @@ Window tabs use Powerline arrows glyphs, so you need to install Powerline enable
 
 The right part of status line consists of following components:
 
-- CPU, memory usage, system load average metrics. Powered by [tmux-plugin-sysstat](https://github.com/samoshkin/tmux-plugin-sysstat)
+- CPU, memory usage, and system load average metrics. These are powered by a [vendored copy of tmux-plugin-sysstat](tmux/vendor/tmux-plugin-sysstat), patched to use the lightweight `vmstat` collector when available instead of repeatedly enumerating every process with `top`.
 - username and hostname (invaluable when you SSH onto remote host)
 - current date time
-- battery information
-- visual indicator when you press prefix key: `[^A]`.
+- visual indicator when you press the prefix key
 - visual indicator when pane is zoomed: `[Z]`
-- online/offline visual indicator (just pings `google.com`)
+- online/offline visual indicator in local sessions (pings `www.google.com` by default)
 
-You might want to hide status bar using `<prefix> C-s` keybinding.
+The status bar refreshes every five seconds. The vendored sysstat provenance and local changes are recorded in [VENDORED.md](tmux/vendor/tmux-plugin-sysstat/VENDORED.md).
 
 
 Nested tmux sessions
 --------------------
 One prefers using tmux on local machine to supercharge their terminal emulator experience, other use it only for remote scenarios to retain session/state in case of disconnect. Things are getting more complex, when you want to be on both sides. You end up with nested session, and face the question: **How you can control inner session, since all keybindings are caught and handled by outer session?**. Community provides several possible solutions.
 
-The most common is to press `C-a` prefix twice. First one is caught by local session, whereas second is passed to remote one. Nothing extra steps need to be done, this works out of the box. However, root keytable bindings are still handled by outer session, and cannot be passed to inner one.
+The most common approach is to press the prefix twice (`C-b C-b` with this configuration). The first is caught by the local session and the second is passed to the remote one. However, root key-table bindings are still handled by the outer session and cannot be passed to the inner one.
 
 Second attempt to tackle this issue, is to [setup 2 individual prefixes](https://simplyian.com/2014/03/29/using-tmux-remotely-within-a-local-tmux-session/), `C-b` for local session, and `C-a` for remote session. And, you know, it feels like:
 
@@ -343,7 +338,7 @@ Second attempt to tackle this issue, is to [setup 2 individual prefixes](https:/
 
 And finally accepted solution, turn off all keybindings and key prefix handling in outer session, when working with inner one. This way, outer session just sits aside, without interfering keystrokes passed to inner session. Credits to [http://stahlke.org/dan/tmux-nested/](http://stahlke.org/dan/tmux-nested/) and this [Github issue](https://github.com/tmux/tmux/issues/237)
 
-So, how it works. When in outer session, simply press `F12` to toggle off all keybindings handling in outer session. Now work with inner session using the same keybinding scheme and same keyprefix. Press `F12` to turn on outer session back.
+With this configuration, press `Shift-Down` in the outer session to disable its key bindings and prefix handling. You can then control the inner session with the normal bindings and prefix. While the outer session is disabled, additional `Shift-Down` presses are consumed by the outer session so they cannot accidentally disable the inner session too. Press `Shift-Up` to enable the outer session again.
 
 ![nested sessions](https://user-images.githubusercontent.com/768858/33151636-84a0bab2-cfe1-11e7-9d5d-412525689c9b.gif)
 
@@ -353,7 +348,7 @@ You might notice that when key bindings are "OFF", special `[OFF]` visual indica
 
 Remote session is detected by existence of `$SSH_CLIENT` variable. When session is remote, following changes are applied:
 - status line is docked to bottom; so it does not stack with status line of local session
-- some widgets are removed from status line: battery, date time. The idea is to economy width, so on wider screens you can open two remote tmux sessions in side-by-side panes of single window of local session.
+- date/time and online-status widgets are removed to save width, while CPU, memory, and load metrics remain visible
 
 You can apply remote-specific settings by extending `~/.tmux/.tmux.remote.conf` file.
 
@@ -394,26 +389,28 @@ All solutions above are suitable for sharing tmux buffer with system clipboard f
 
 There are 2 workarounds to address remote scenarios.
 
-Use **[ANSI OSC 52](https://en.wikipedia.org/wiki/ANSI_escape_code#Escape_sequences)** escape [sequence](https://blog.vucica.net/2017/07/what-are-osc-terminal-control-sequences-escape-codes.html) to talk to controlling/parent terminal and pass buffer on local machine. Terminal should properly undestand and handle OSC 52. Currently, only iTerm2 and XTerm support it. OSX Terminal, Gnome Terminal, Terminator do not.
+Use **[ANSI OSC 52](https://en.wikipedia.org/wiki/ANSI_escape_code#Escape_sequences)** escape sequences to talk to the controlling terminal and place the buffer on the local machine's clipboard. The terminal must support OSC 52 and allow applications to write to the clipboard; support and permission settings vary by terminal.
+
+Every configured copy binding captures the initiating tmux client's `#{client_tty}` and passes it to the clipboard script. This is important when a session has multiple attached clients: `SSH_TTY` values stored in a pane or session environment may point to an older or different SSH connection.
 
 Second workaround is really involved and consists of [local network listener and SSH remote tunneling](https://apple.stackexchange.com/a/258168):
 
 - SSH onto target machine with remote tunneling on
     ```
-    ssh -R 2222:localhost:3333  alexeys@192.168.33.100
+    ssh -R 11988:localhost:3333 alexeys@192.168.33.100
     ```
 - When text is copied inside tmux (by mouse, by keyboard by whatever configured shortcut), pipe text to network socket on remote machine
     ```
-    echo "buffer" | nc localhost 2222
+    echo "buffer" | nc localhost 11988
     ```
-- Buffer will be sent thru SSH remote tunnel from port `2222` on remote machine to port `3333` on local machine.
+- Buffer will be sent through the SSH reverse tunnel from port `11988` on the remote machine to port `3333` on the local machine. The remote port matches `@copy_backend_remote_tunnel_port` in `tmux.remote.conf`.
 - Setup a service on local machine (systemd service unit with socket activation), which listens on network socket on port `3333`, and pipes any input to `pbcopy` command (or `xsel`, `xclip`).
 
 This tmux-config does its best to integrate with system clipboard, trying all solutions above in order, and falling back to OSC 52 ANSI escape sequences in case of failure. 
 
-On OSX you might need to install `reattach-to-user-namespace` wrapper: `brew install reattach-to-user-namespace`, and make sure OSC 52 sequence handling is turned on in iTerm. (Preferences -> General -> Applications in Terminal may access clipboard).
+On macOS, `pbcopy` is used when available. Older systems may require the `reattach-to-user-namespace` wrapper. When relying on OSC 52, make sure the terminal permits applications to access the clipboard.
 
-On Linux, make sure `xclip` or `xsel` is installed. For remote scenarios, you would still need to setup network listener and use SSH remote tunneling, unless you terminal emulators supports OSC 52 sequences.
+On Linux, install `xclip` or `xsel` for local graphical sessions. Remote sessions need either OSC 52 support or the optional listener and SSH reverse tunnel described above.
 
 
 
@@ -447,35 +444,30 @@ Note, that variables are not extracted to dedicated file, as it should be, becau
 iTerm2 and tmux integration
 ---------------------------
 
-If you're an iTerm use same to me, most likely you already have a muscle memory for most common actions and keybindings (split pane, focus pane, fullscreen pane, move between tabs, create new tab, etc). When I switched to tmux, I found new key table more difficult: more keys to type, don't forget to enter `prefix` and recall if you've already pressed it or not (compare `C-a, c` with "⌘T", or `C-a ->` with "⌘⌥->"). iTerm2 keybinding was so natural to me, so I decided to remap most common keybindings to tell iTerm2 to execute corresponding tmux actions.
+If you're an iTerm user, you may already have muscle memory for common actions such as splitting panes, changing focus, zooming a pane, or creating a window. iTerm2 can send the tmux key sequences for those actions directly.
 
 You can setup new profile in iTerm preferences to override default keybindings, to tell iTerm to send pre-configured sequences of keys, that will trigger corresponding action in tmux.
 
 ![iterm preferences](https://user-images.githubusercontent.com/768858/33185301-54afc402-d08a-11e7-9622-232a4607df8b.png)
 
-For example, when "^⌘↑" pressed, sequence of bytes `0x01 0x1b 0x5b 0x31 0x3b 0x35 0x41` are sent through terminal to running tmux instance, that interprets them as `C-a C-↑` keybinding and triggers `resize-pane -U` according to our `.tmux.conf` configuration.
+For example, an iTerm2 shortcut can send the bytes `0x02 0x2b`, which tmux interprets as `C-b +` and uses to toggle pane zoom with this configuration.
 
 You can get binary representation of any keys, using `showkey` or `od` commands
 
 ```
 $od -t x1
 
-^A^[[1;5A   // press C-a C-↑ on your keyboard
-0000000 01 1b 5b 31 3b 35 41
-0000007
+^B+          // press C-b + on your keyboard
+0000000 02 2b
+0000002
 ```
 
 ```
 $ showkey -a
 Press any keys - Ctrl-D will terminate this program
 
-^A        1 0001 0x01
-^[[1;5A  27 0033 0x1b
-         91 0133 0x5b
-         49 0061 0x31
-         59 0073 0x3b
-         53 0065 0x35
-         65 0101 0x41
+^B        2 0002 0x02
++        43 0053 0x2b
 ```
 
 You can remap whatever key in this way, but I do this only for those ones, which have similar analogous action in tmux and are most common(resize pane, zoom pane, create new window, etc). See table with keybindings above.
