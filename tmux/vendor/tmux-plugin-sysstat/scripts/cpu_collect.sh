@@ -28,7 +28,20 @@ get_cpu_usage() {
         | stdbuf -o0 awk 'NR>2 {print 100-$(NF-0)}'
     else
       vmstat -n "$refresh_interval" "$samples_count" \
-        | stdbuf -o0 awk 'NR>2 {print 100-$(NF-2)}'
+        | stdbuf -o0 awk '
+            $1 == "r" && $2 == "b" {
+              for (i = 1; i <= NF; i++) {
+                if ($i == "id") {
+                  idle_column = i
+                  break
+                }
+              }
+              next
+            }
+            idle_column && NF >= idle_column {
+              print 100 - $idle_column
+            }
+          '
     fi
   else
     if is_freebsd; then
