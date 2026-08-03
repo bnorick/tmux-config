@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+# Create an isolated tmux environment without touching the normal tmux server,
+# state, or config.
+
+set -euo pipefail
+
+SOCKET_NAME="tmux-test-env-${USER:-user}"
+SESSION_NAME="tmux-test-env"
+STATE_DIR="${TMPDIR:-/tmp}/tmux-test-env-${USER:-user}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+TEST_TMUX_DIR="$STATE_DIR/tmux"
+TEST_CONFIG="$STATE_DIR/tmux.conf"
+TEST_XDG_CONFIG_HOME="$STATE_DIR/xdg"
+TEST_XDG_TMUX_DIR="$TEST_XDG_CONFIG_HOME/tmux"
+PLUGIN_DIR="$TEST_TMUX_DIR/plugins/tmux-resurrect"
+TPM_DIR="$TEST_TMUX_DIR/plugins/tpm"
+INIT_MARKER="$STATE_DIR/.initialized"
+TMUX_BIN="${TMUX_BIN:-tmux}"
+
+usage() {
+	cat <<'EOF'
+Usage: scripts/tmux-test-env <command>
+
+Commands:
+  init     Create the test environment and install this repo's TPM plugins.
+  start    Create and attach to an isolated tmux test session.
+  restore  Replace the test server, restore the saved state, and attach.
+  show     Print every pane from the latest saved resurrect snapshot.
+  stop     Stop the isolated test tmux server, preserving its test state.
+  clean    Stop the test server and remove only its temporary saved state.
+
+The test server loads a private, path-rewritten copy of this repository's
+tmux/tmux.conf. Its plugins, plugin configuration, and resurrect state live
+below $STATE_DIR; your normal tmux socket, ~/.tmux, and ~/.tmux/resurrect are
+never used. Shells retain your normal HOME and shell startup files.
+
+Run init once (network access required) before using the test environment.
+In the test session, use prefix C-s to save with tmux-resurrect. The restore
+and show commands require tmux-resurrect.
+EOF
+}
+
+escape_sed_replacement() {
+	printf '%s' "$1" | sed 's/[&|\\]/\\&/g'
+}
+
+prepare_test_config() {
+	mkdir -p "$TEST_TMUX_DIR/plugins" "$TEST_XDG_TMUX_DIR"
+	ln -sfn "$REPO_ROOT/tmux/tmux.remote.conf" "$TEST_TMUX_DIR/tmux.remote.conf"
+	ln -sfn "$REPO_ROOT/tmux/renew_env.sh" "$TEST_TMUX_DIR/renew_env.sh"
+	ln -sfn "$REPO_ROOT/tmux/yank.sh" "$TEST_TMUX_DIR/yank.sh"
+	ln -sfn "$REPO_ROOT/tmux/vendor" "$TEST_TMUX_DIR/vendor"
+	local test_tmux_dir_escaped
+	local test_config_escaped
+	test_tmux_dir_escaped="$(escape_sed_replacement "$TEST_TMUX_DIR")"
+	test_config_escaped="$(escape_sed_replacement "$TEST_CONFIG")"
+	{
+		printf 'set-environment -g TMUX_PLUGIN_MANAGER_PATH %q\n' "$TEST_TMUX_DIR/plugins"
+		sed \
+			-e "s|~/.tmux\\.conf|$test_config_escaped|g" \
+			-e "s|~/.tmux|$test_tmux_dir_escaped|g" \
+			"$REPO_ROOT/tmux/tmux.conf"
+	} >"$TEST_CONFIG"
+	ln -sfn "$TEST_CONFIG" "$TEST_XDG_TMUX_DIR/tmux.conf"
+}
+
+plugin_available() {
+	[[ -x "$PLUGIN_DIR/scripts/save.sh" && -x "$PLUGIN_DIR/scripts/restore.sh" ]]
+}
+
+require_plugin() {
+	if ! plugin_available; then
+		echo "tmux-resurrect was not found at: $PLUGIN_DIR" >&2
+		echo "Run $0 init to install it in the test environment." >&2
+		exit 1
+	fi
+}
+
+require_initialized() {
+	if [[ ! -f "$INIT_MARKER" ]]; then
+		echo "The test environment is not initialized. Run $0 init first." >&2
+		exit 1
+	fi
+}
+
+server_running() {
+	"$TMUX_BIN" -L "$SOCKET_NAME" has-session -t "$SESSION_NAME" 2>/dev/null
+}
+
+configure_server() {
+	if plugin_available; then
+		"$TMUX_BIN" -L "$SOCKET_NAME" set-option -g @resurrect-dir "$STATE_DIR"
+		# resurrect.tmux is a Bash entrypoint, not a tmux configuration file.
+		"$TMUX_BIN" -L "$SOCKET_NAME" run-shell "$PLUGIN_DIR/resurrect.tmux"
+	fi
+}
+
+new_server() {
+	prepare_test_config
+	"$TMUX_BIN" -L "$SOCKET_NAME" -f "$TEST_CONFIG" new-session -d -s "$SESSION_NAME" -c "$PWD"
+	configure_server
+}
+
+attach() {
+	exec "$TMUX_BIN" -L "$SOCKET_NAME" attach-session -t "$SESSION_NAME"
+}
+
+case "${1:-}" in
+	start)
+		require_initialized
+		if ! server_running; then
+			new_server
+		fi
+		echo "Test state: $STATE_DIR"
+		if plugin_available; then
+			echo "Experiment here freely; use prefix C-s to save with tmux-resurrect."
+		else
+			echo "tmux-resurrect is unavailable, but the isolated tmux server is ready."
+		fi
+		attach
+		;;
+	restore)
+		require_initialized
+		require_plugin
+		if ! find "$STATE_DIR" -maxdepth 1 -type f -name 'tmux_resurrect_*.txt' -print -quit | grep -q .; then
+			echo "No saved test state found. In the test session, use prefix C-s first." >&2
+			exit 1
+		fi
+		"$TMUX_BIN" -L "$SOCKET_NAME" kill-server 2>/dev/null || true
+		new_server
+		"$TMUX_BIN" -L "$SOCKET_NAME" run-shell "$PLUGIN_DIR/scripts/restore.sh"
+		attach
+		;;
+	show)
+		require_initialized
+		if [[ -r "$STATE_DIR/last" ]]; then
+			awk -F '\t' '
+				/^pane/ {
+					full_command = $11
+					sub(/^:/, "", full_command)
+					printf "session=%s window=%s pane=%s cwd=%s command=%s full-command=%s\\n", $2, $3, $6, $8, $10, full_command
+				}
+			' "$STATE_DIR/last"
+		else
+			echo "No saved test state found. In the test session, use prefix C-s first."
+		fi
+		;;
+	init)
+		prepare_test_config
+		if [[ ! -d "$TPM_DIR/.git" ]]; then
+			git clone https://github.com/tmux-plugins/tpm "$TPM_DIR"
+		fi
+		if ! server_running; then
+			new_server
+		else
+			"$TMUX_BIN" -L "$SOCKET_NAME" source-file "$TEST_CONFIG"
+		fi
+		test_socket_path="$("$TMUX_BIN" -L "$SOCKET_NAME" display-message -p '#{socket_path}')"
+		TMUX="$test_socket_path" XDG_CONFIG_HOME="$TEST_XDG_CONFIG_HOME" "$TPM_DIR/bin/install_plugins"
+		"$TMUX_BIN" -L "$SOCKET_NAME" source-file "$TEST_CONFIG"
+		if ! plugin_available; then
+			echo "tmux-resurrect was not installed; initialization is incomplete." >&2
+			exit 1
+		fi
+		touch "$INIT_MARKER"
+		echo "Initialized test environment in $STATE_DIR"
+		;;
+	stop)
+		"$TMUX_BIN" -L "$SOCKET_NAME" kill-server 2>/dev/null || true
+		echo "Stopped isolated test tmux server. Test state remains in $STATE_DIR"
+		;;
+	clean)
+		"$TMUX_BIN" -L "$SOCKET_NAME" kill-server 2>/dev/null || true
+		rm -rf -- "$STATE_DIR"
+		echo "Removed isolated test server and state."
+		;;
+	-h|--help|help|'')
+		usage
+		;;
+	*)
+		echo "Unknown command: $1" >&2
+		usage >&2
+		exit 2
+		;;
+esac
