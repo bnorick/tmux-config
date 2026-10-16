@@ -1,0 +1,12 @@
+#!/usr/bin/env -S uvx --from=rust-just just --justfile
+
+root_dir := justfile_directory()
+just := "just --justfile " + justfile()
+
+# List all supported project commands and their usage.
+default:
+    @{{ just }} --list
+
+# Kill the active tmux server and all of its sessions.
+kill-tmux:
+    tmux kill-server
